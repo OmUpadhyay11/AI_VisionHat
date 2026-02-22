@@ -1,0 +1,5 @@
+yoloenv/
+__pycache__/
+*.pyc
+debug.jpg
+

@@ -1,3 +1,4 @@
+# speech.py
 import time
 import threading
 import queue
@@ -5,25 +6,24 @@ import pyttsx3
 
 
 class Speaker:
-    def __init__(self, rate: int = 175, volume: float = 1.0, cooldown_sec: float = 1.5):
+    def __init__(self, rate: int = 175, volume: float = 1.0):
         self.engine = pyttsx3.init()
         self.engine.setProperty("rate", rate)
         self.engine.setProperty("volume", volume)
 
-        self.cooldown_sec = cooldown_sec
-        self._last_spoken_at = 0.0
-        self._last_text = None
-
         self.q = queue.Queue()
         self._stop = False
+        self._t = threading.Thread(target=self._run, daemon=True)
+        self._t.start()
 
-        self.thread = threading.Thread(target=self._loop, daemon=True)
-        self.thread.start()
+        # prevents repeating the same phrase too often
+        self.last_text = None
+        self.last_time = 0.0
 
-    def _loop(self):
+    def _run(self):
         while not self._stop:
             try:
-                text, force = self.q.get(timeout=0.1)
+                text = self.q.get(timeout=0.2)
             except queue.Empty:
                 continue
 
@@ -31,21 +31,36 @@ class Speaker:
                 self.engine.say(text)
                 self.engine.runAndWait()
             except Exception as e:
-                print("TTS error:", e)
+                # Don't crash your demo if TTS glitches
+                print(f"[TTS] error: {e}")
 
-    def say(self, text: str, force: bool = False):
+    def speak(self, text: str, cooldown: float = 1.0, force: bool = False):
+        """
+        cooldown: minimum seconds between spoken messages
+        force: bypass cooldown + same-text suppression (use sparingly)
+        """
         now = time.time()
 
         if not force:
-            # basic anti-spam
-            if (now - self._last_spoken_at) < self.cooldown_sec:
+            if text == self.last_text and (now - self.last_time) < max(1.5, cooldown):
                 return
-            if text == self._last_text and (now - self._last_spoken_at) < (self.cooldown_sec * 2):
+            if (now - self.last_time) < cooldown:
                 return
 
-        self._last_spoken_at = now
-        self._last_text = text
-        self.q.put((text, force))
+        self.last_text = text
+        self.last_time = now
+
+        # Drop backlog: keep only the most recent message (better for real-time)
+        while not self.q.empty():
+            try:
+                self.q.get_nowait()
+            except queue.Empty:
+                break
+
+        self.q.put(text)
 
     def close(self):
         self._stop = True
+
+
+speaker = Speaker(rate=180, volume=1.0)
